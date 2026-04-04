@@ -19,7 +19,7 @@ This buildpack also:
 Add the buildpack to your Heroku app, before your language buildpack (e.g. Ruby, Node):
 
 ```bash
-heroku buildpacks:add --index 1 https://github.com/YOUR_ORG/heroku-buildpack-libreoffice -a your-app
+heroku buildpacks:add --index 1 https://github.com/velocity-labs/heroku-buildpack-libreoffice -a your-app
 ```
 
 No `Aptfile` or configuration is needed. Just deploy.
