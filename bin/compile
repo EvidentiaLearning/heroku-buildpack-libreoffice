@@ -1,0 +1,109 @@
+#!/bin/bash
+
+set -eo pipefail
+
+# =============================================================================
+# Configuration
+# =============================================================================
+LIBREOFFICE_VERSION="26.2.2.2"
+LIBREOFFICE_URL="https://appimages.libreitalia.org/LibreOffice-${LIBREOFFICE_VERSION}.basic-x86_64.AppImage"
+LIBREOFFICE_SHA256="9b9d436e7ab2bf2783d4d22e5d0a93748d2a809e22fe32f215ce19e78d0e96a0"
+
+APT_PACKAGES=(
+  libsm6
+  libice6
+  libxinerama1
+  libdbus-glib-1-2
+  libharfbuzz0b
+  libharfbuzz-icu0
+  libx11-xcb1
+  libxcb1
+  libcups2
+)
+
+# =============================================================================
+# Paths
+# =============================================================================
+BUILD_DIR=$1
+CACHE_DIR=$2
+
+VENDOR_DIR="$BUILD_DIR/vendor/libreoffice"
+APT_DIR="$BUILD_DIR/.apt"
+LO_CACHE_DIR="$CACHE_DIR/libreoffice-${LIBREOFFICE_VERSION}"
+APT_CACHE_DIR="$CACHE_DIR/apt-packages"
+PROFILE_DIR="$BUILD_DIR/.profile.d"
+
+# =============================================================================
+# LibreOffice AppImage
+# =============================================================================
+mkdir -p "$VENDOR_DIR" "$LO_CACHE_DIR" "$PROFILE_DIR"
+
+if [ -d "$LO_CACHE_DIR/extracted" ]; then
+  echo "-----> Using cached LibreOffice ${LIBREOFFICE_VERSION}"
+else
+  echo "-----> Downloading LibreOffice ${LIBREOFFICE_VERSION}"
+  APPIMAGE_PATH="$LO_CACHE_DIR/LibreOffice.AppImage"
+  curl -sL "$LIBREOFFICE_URL" -o "$APPIMAGE_PATH"
+
+  echo "       Verifying SHA-256 checksum"
+  ACTUAL_SHA256=$(sha256sum "$APPIMAGE_PATH" | awk '{print $1}')
+  if [ "$ACTUAL_SHA256" != "$LIBREOFFICE_SHA256" ]; then
+    echo " !     SHA-256 checksum mismatch!"
+    echo " !     Expected: $LIBREOFFICE_SHA256"
+    echo " !     Actual:   $ACTUAL_SHA256"
+    echo " !     The download may be corrupted or tampered with."
+    echo " !     Update LIBREOFFICE_SHA256 in bin/compile if upgrading."
+    rm -f "$APPIMAGE_PATH"
+    exit 1
+  fi
+  echo "       Checksum verified"
+
+  echo "       Extracting AppImage"
+  cd "$LO_CACHE_DIR"
+  chmod a+x "$APPIMAGE_PATH"
+  "$APPIMAGE_PATH" --appimage-extract > /dev/null 2>&1
+  mv squashfs-root extracted
+  rm -f "$APPIMAGE_PATH"
+fi
+
+echo "       Installing to vendor/libreoffice"
+cp -R "$LO_CACHE_DIR/extracted/usr" "$VENDOR_DIR/"
+cp -R "$LO_CACHE_DIR/extracted/opt" "$VENDOR_DIR/"
+INSTALLED_VERSION=$(ls "$VENDOR_DIR/opt")
+
+# =============================================================================
+# Apt dependencies (X11 libraries required by LibreOffice)
+# =============================================================================
+mkdir -p "$APT_DIR" "$APT_CACHE_DIR/archives/partial" "$APT_CACHE_DIR/lists"
+
+echo "-----> Installing ${#APT_PACKAGES[@]} system dependencies"
+
+APT_OPTIONS=(
+  -o debug::nolocking=true
+  -o dir::cache="$APT_CACHE_DIR"
+  -o dir::state::lists="$APT_CACHE_DIR/lists"
+)
+
+apt-get "${APT_OPTIONS[@]}" update > /dev/null 2>&1
+apt-get "${APT_OPTIONS[@]}" -y --allow-downgrades -d install --reinstall "${APT_PACKAGES[@]}" > /dev/null 2>&1
+
+for DEB in "$APT_CACHE_DIR"/archives/*.deb; do
+  [ -f "$DEB" ] || continue
+  PKG_NAME=$(dpkg-deb --showformat='${Package}' --show "$DEB")
+  PKG_VERSION=$(dpkg-deb --showformat='${Version}' --show "$DEB")
+  echo "       * $PKG_NAME ($PKG_VERSION)"
+  dpkg -x "$DEB" "$APT_DIR"
+done
+
+# =============================================================================
+# Runtime environment (.profile.d)
+# =============================================================================
+cat > "$PROFILE_DIR/libreoffice.sh" << 'PROFILE'
+export PATH="$HOME/vendor/libreoffice/opt/INSTALLED_VERSION_PLACEHOLDER/program:$PATH"
+export LD_LIBRARY_PATH="$HOME/.apt/usr/lib/x86_64-linux-gnu:$HOME/.apt/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="$HOME/.apt/usr/lib/x86_64-linux-gnu:$HOME/.apt/lib/x86_64-linux-gnu:${LIBRARY_PATH:-}"
+PROFILE
+
+sed -i "s|INSTALLED_VERSION_PLACEHOLDER|$INSTALLED_VERSION|g" "$PROFILE_DIR/libreoffice.sh"
+
+echo "-----> LibreOffice buildpack complete (${INSTALLED_VERSION})"
