@@ -6,8 +6,11 @@ set -eo pipefail
 # Configuration
 # =============================================================================
 LIBREOFFICE_VERSION="26.2.2.2"
-LIBREOFFICE_URL="https://appimages.libreitalia.org/LibreOffice-${LIBREOFFICE_VERSION}.basic-x86_64.AppImage"
-LIBREOFFICE_SHA256="9b9d436e7ab2bf2783d4d22e5d0a93748d2a809e22fe32f215ce19e78d0e96a0"
+# The usr/ and opt/ trees of LibreOffice-${LIBREOFFICE_VERSION}.basic-x86_64.AppImage,
+# extracted and repackaged as a release asset on this repo so builds do not
+# depend on appimages.libreitalia.org.
+LIBREOFFICE_URL="https://github.com/EvidentiaLearning/heroku-buildpack-libreoffice/releases/download/libreoffice-${LIBREOFFICE_VERSION}/libreoffice-${LIBREOFFICE_VERSION}-x86_64.tar.gz"
+LIBREOFFICE_SHA256="87c43e74837aca5464855ee22977ef213ec4d9033c8d6ecf19d03a53853b2ba9"
 
 APT_PACKAGES=(
   libsm6
@@ -34,7 +37,7 @@ APT_CACHE_DIR="$CACHE_DIR/apt-packages"
 PROFILE_DIR="$BUILD_DIR/.profile.d"
 
 # =============================================================================
-# LibreOffice AppImage
+# LibreOffice
 # =============================================================================
 mkdir -p "$VENDOR_DIR" "$LO_CACHE_DIR" "$PROFILE_DIR"
 
@@ -42,28 +45,26 @@ if [ -d "$LO_CACHE_DIR/extracted" ]; then
   echo "-----> Using cached LibreOffice ${LIBREOFFICE_VERSION}"
 else
   echo "-----> Downloading LibreOffice ${LIBREOFFICE_VERSION}"
-  APPIMAGE_PATH="$LO_CACHE_DIR/LibreOffice.AppImage"
-  curl -sL "$LIBREOFFICE_URL" -o "$APPIMAGE_PATH"
+  TARBALL_PATH="$LO_CACHE_DIR/libreoffice.tar.gz"
+  curl -fsSL --retry 3 "$LIBREOFFICE_URL" -o "$TARBALL_PATH"
 
   echo "       Verifying SHA-256 checksum"
-  ACTUAL_SHA256=$(sha256sum "$APPIMAGE_PATH" | awk '{print $1}')
+  ACTUAL_SHA256=$(sha256sum "$TARBALL_PATH" | awk '{print $1}')
   if [ "$ACTUAL_SHA256" != "$LIBREOFFICE_SHA256" ]; then
     echo " !     SHA-256 checksum mismatch!"
     echo " !     Expected: $LIBREOFFICE_SHA256"
     echo " !     Actual:   $ACTUAL_SHA256"
     echo " !     The download may be corrupted or tampered with."
     echo " !     Update LIBREOFFICE_SHA256 in bin/compile if upgrading."
-    rm -f "$APPIMAGE_PATH"
+    rm -f "$TARBALL_PATH"
     exit 1
   fi
   echo "       Checksum verified"
 
-  echo "       Extracting AppImage"
-  cd "$LO_CACHE_DIR"
-  chmod a+x "$APPIMAGE_PATH"
-  "$APPIMAGE_PATH" --appimage-extract > /dev/null 2>&1
-  mv squashfs-root extracted
-  rm -f "$APPIMAGE_PATH"
+  echo "       Extracting"
+  mkdir -p "$LO_CACHE_DIR/extracted"
+  tar -xzf "$TARBALL_PATH" -C "$LO_CACHE_DIR/extracted"
+  rm -f "$TARBALL_PATH"
 fi
 
 echo "       Installing to vendor/libreoffice"
